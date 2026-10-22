@@ -1,0 +1,95 @@
+name: Build MixMate
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    name: Mac (AU + VST3)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (Apple Silicon + Intel)
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DMIXMATE_BUILD_NUMBER=${{ github.run_number }}
+          cmake --build build --config Release --target MixMate_AU MixMate_VST3 -j 4
+
+      - name: Sign (ad-hoc) and check the AU
+        run: |
+          ART=build/MixMate_artefacts/Release
+          codesign --force --deep --sign - "$ART/AU/MixMate.component"
+          codesign --force --deep --sign - "$ART/VST3/MixMate.vst3"
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$ART/AU/MixMate.component" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx MxMt Gily
+
+      - name: Package
+        run: |
+          ART=build/MixMate_artefacts/Release
+          mkdir -p dist/MixMate-mac
+          cp -R "$ART/AU/MixMate.component" "$ART/VST3/MixMate.vst3" dist/MixMate-mac/
+          cp "packaging/mac/Install MixMate.command" packaging/mac/README.txt packaging/THIRD-PARTY-NOTICES.txt dist/MixMate-mac/
+          chmod +x "dist/MixMate-mac/Install MixMate.command"
+          cd dist && ditto -c -k --keepParent MixMate-mac MixMate-mac.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MixMate-mac
+          path: dist/MixMate-mac.zip
+
+  windows:
+    name: Windows (VST3)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DMIXMATE_BUILD_NUMBER=${{ github.run_number }}
+          cmake --build build --config Release --target MixMate_VST3
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/MixMate-windows | Out-Null
+          Copy-Item -Recurse build/MixMate_artefacts/Release/VST3/MixMate.vst3 dist/MixMate-windows/
+          Copy-Item packaging/windows/README.txt, packaging/THIRD-PARTY-NOTICES.txt dist/MixMate-windows/
+          Compress-Archive -Path dist/MixMate-windows -DestinationPath dist/MixMate-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MixMate-windows
+          path: dist/MixMate-windows.zip
+
+  release:
+    name: Publish download
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: MixMate 1.0.${{ github.run_number }}
+          make_latest: true
+          body: |
+            **Mac:** download `MixMate-mac.zip`, unzip it and follow `README.txt` (one Terminal step).
+            **Windows:** download `MixMate-windows.zip` and copy `MixMate.vst3` into `C:\Program Files\Common Files\VST3`.
+
+            Changes: ${{ github.event.head_commit.message }}
+          files: |
+            dist/MixMate-mac.zip
+            dist/MixMate-windows.zip
