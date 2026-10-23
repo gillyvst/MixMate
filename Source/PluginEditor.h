@@ -41,7 +41,7 @@ private:
 class CurveView : public juce::Component
 {
 public:
-    void setCurve (const EqCurve& curve, float strength);
+    void setCurve (const EqCurve& curve, float strength, bool levelMatched);
     void setActive (bool shouldBeActive);
 
     std::function<void()> onClick;
@@ -60,7 +60,7 @@ class HeadphonePanel : public juce::Component
 public:
     explicit HeadphonePanel (int slot);
 
-    void update (const Headphone& hp, float strength, bool isActive, bool isEnabled);
+    void update (const Headphone& hp, float strength, bool levelMatched, bool isActive, bool isEnabled);
 
     std::function<void()> onSelect;
     std::function<void()> onOpenPicker;
@@ -140,7 +140,7 @@ private:
     juce::Rectangle<int> centreArea, headphonesRow, monitorRow, soloRow, strengthRow, statusArea;
 
     // Last values shown, so the UI only repaints when something changes.
-    int shownState[6] { -1, -1, -1, -1, -1, -1 };
+    int shownState[7] { -1, -1, -1, -1, -1, -1, -1 };
     float shownStrength = -1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixMateEditor)

@@ -102,4 +102,28 @@ inline double curveResponseDb (const EqCurve& curve, double freq, float strength
     return total;
 }
 
+// How much a curve changes the loudness of typical music, in dB. Music has roughly equal
+// energy per octave (like pink noise), so this is the power average of the response over
+// log-spaced frequencies from 100 Hz to 10 kHz, where our ears judge loudness most.
+// Level matching applies the opposite of this.
+inline double curveLoudnessDb (const EqCurve& curve, float strength, double sampleRate = 48000.0)
+{
+    constexpr int points = 64;
+    std::array<BiquadCoeffs, EqCurve::maxBands> coeffs;
+    for (int i = 0; i < curve.numBands; ++i)
+        coeffs[(size_t) i] = BiquadCoeffs::make (curve.bands[(size_t) i], sampleRate, strength);
+
+    double power = 0.0;
+    for (int p = 0; p < points; ++p)
+    {
+        const double freq = 100.0 * std::pow (100.0, (double) p / (points - 1));
+        double db = 0.0;
+        for (int i = 0; i < curve.numBands; ++i)
+            db += coeffs[(size_t) i].magnitudeDb (freq, sampleRate);
+        power += std::pow (10.0, db / 10.0);
+    }
+
+    return 10.0 * std::log10 (power / points);
+}
+
 } // namespace mixmate

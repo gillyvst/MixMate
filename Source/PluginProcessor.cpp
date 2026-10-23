@@ -148,7 +148,7 @@ void MixMateProcessor::EqChain::update (const EqCurve& curve, double sampleRate,
     for (int i = 0; i < numBands; ++i)
         coeffs[(size_t) i] = BiquadCoeffs::make (curve.bands[(size_t) i], sampleRate, strength);
 
-    gain.setTargetValue (levelMatch ? juce::Decibels::decibelsToGain (curve.preampDb * strength) : 1.0f);
+    gain.setTargetValue (levelMatch ? juce::Decibels::decibelsToGain ((float) -curveLoudnessDb (curve, strength, sampleRate)) : 1.0f);
 }
 
 float MixMateProcessor::EqChain::process (int channel, float input) noexcept
@@ -303,11 +303,11 @@ void MixMateProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
 
         if (numChannels > 1)
         {
+            // Mid plays in mono; side keeps its stereo width (right is the inverse of left).
             const float mid = 0.5f * (out[0] + out[1]);
             const float side = 0.5f * (out[0] - out[1]);
-            const float shared = gMid * mid + gSide * side;
-            out[0] = gStereo * out[0] + shared;
-            out[1] = gStereo * out[1] + shared;
+            out[0] = gStereo * out[0] + gMid * mid + gSide * side;
+            out[1] = gStereo * out[1] + gMid * mid - gSide * side;
         }
         else
         {

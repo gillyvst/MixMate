@@ -115,11 +115,13 @@ namespace
     }
 }
 
-void CurveView::setCurve (const EqCurve& curve, float strength)
+void CurveView::setCurve (const EqCurve& curve, float strength, bool levelMatched)
 {
+    // Show what you actually hear: with level matching the curve sits around 0 dB.
+    const auto offset = levelMatched ? (float) curveLoudnessDb (curve, strength) : 0.0f;
     responseDb.resize (curvePoints);
     for (int i = 0; i < curvePoints; ++i)
-        responseDb[(size_t) i] = (float) curveResponseDb (curve, frequencyAt (i), strength);
+        responseDb[(size_t) i] = (float) curveResponseDb (curve, frequencyAt (i), strength) - offset;
     repaint();
 }
 
@@ -196,13 +198,13 @@ HeadphonePanel::HeadphonePanel (int s) : slot (s)
     addAndMakeVisible (curve);
 }
 
-void HeadphonePanel::update (const Headphone& hp, float strength, bool isActive, bool isEnabled)
+void HeadphonePanel::update (const Headphone& hp, float strength, bool levelMatched, bool isActive, bool isEnabled)
 {
     name = hp.name;
     info = hp.type + "  " + hp.source;
     active = isActive;
     panelEnabled = isEnabled;
-    curve.setCurve (hp.curve, strength);
+    curve.setCurve (hp.curve, strength, levelMatched);
     curve.setActive (isActive);
     setAlpha (isEnabled ? 1.0f : 0.5f);
     repaint();
@@ -463,13 +465,14 @@ void MixMateEditor::timerCallback()
 
 void MixMateEditor::refreshFromProcessor (bool force)
 {
-    const int state[6] = {
+    const int state[7] = {
         processor.getChoice (ParamIDs::twoMode),
         processor.getChoice (ParamIDs::headphones),
         processor.getChoice (ParamIDs::monitor),
         processor.getChoice (ParamIDs::solo),
         processor.getHeadphoneIndex (0),
         processor.getHeadphoneIndex (1),
+        processor.getChoice (ParamIDs::levelMatch),
     };
     const float strength = processor.apvts.getRawParameterValue (ParamIDs::strength)->load() / 100.0f;
 
@@ -494,7 +497,7 @@ void MixMateEditor::refreshFromProcessor (bool force)
     {
         const int index = state[4 + slot];
         if (index >= 0)
-            panels[slot].update (processor.database->get (index), strength,
+            panels[slot].update (processor.database->get (index), strength, state[6] != 0,
                                  hpState == slot + 1, slot == 0 || twoMode);
     }
 

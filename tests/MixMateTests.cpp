@@ -117,14 +117,14 @@ int main (int argc, char** argv)
 
         for (double f : { 40.0, 118.0, 1000.0, 3169.0, 8800.0 })
         {
-            const double expected = curveResponseDb (curve, f, 1.0f, sampleRate) + curve.preampDb;
+            const double expected = curveResponseDb (curve, f, 1.0f, sampleRate) - curveLoudnessDb (curve, 1.0f, sampleRate);
             auto [l, r] = runSine (p, f, 0.25f, 0.25f);
             const double got = gainDb (l, 0.25f);
             check (std::abs (got - expected) < 0.1, juce::String (f) + " Hz: " + juce::String (got, 2) + " dB (expected " + juce::String (expected, 2) + ")");
         }
 
         setParam (p, ParamIDs::strength, 50.0f);
-        const double expectedHalf = curveResponseDb (curve, 40.0, 0.5f, sampleRate) + curve.preampDb * 0.5f;
+        const double expectedHalf = curveResponseDb (curve, 40.0, 0.5f, sampleRate) - curveLoudnessDb (curve, 0.5f, sampleRate);
         auto [l, r] = runSine (p, 40.0, 0.25f, 0.25f, 2.0);
         check (std::abs (gainDb (l, 0.25f) - expectedHalf) < 0.1, "50% strength at 40 Hz: " + juce::String (gainDb (l, 0.25f), 2) + " dB (expected " + juce::String (expectedHalf, 2) + ")");
 
@@ -132,7 +132,65 @@ int main (int argc, char** argv)
         setParam (p, ParamIDs::levelMatch, 0.0f);
         auto [l2, r2] = runSine (p, 1000.0, 0.25f, 0.25f);
         const double noPreamp = curveResponseDb (curve, 1000.0, 1.0f, sampleRate);
-        check (std::abs (gainDb (l2, 0.25f) - noPreamp) < 0.1, "level match off removes the preamp");
+        check (std::abs (gainDb (l2, 0.25f) - noPreamp) < 0.1, "level match off removes the gain compensation");
+    }
+
+    std::cout << "Level match keeps music at the same loudness" << std::endl;
+    {
+        // Pink noise has music's average spectrum. Compare its level (100 Hz - 10 kHz,
+        // via an RMS of band-passed audio) with MixMate off and on for each popular headphone.
+        auto pinkNoiseLevelDb = [] (MixMateProcessor& p)
+        {
+            p.prepareToPlay (sampleRate, blockSize);
+            juce::Random random (1234);
+            double b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+            juce::dsp::IIR::Filter<float> hp, lp;
+            hp.coefficients = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 100.0);
+            lp.coefficients = juce::dsp::IIR::Coefficients<float>::makeLowPass (sampleRate, 10000.0);
+            juce::AudioBuffer<float> buffer (2, blockSize);
+            juce::MidiBuffer midi;
+            double sum = 0;
+            long count = 0;
+            for (int block = 0; block < 400; ++block)
+            {
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    // Paul Kellet's pink noise filter.
+                    const double white = random.nextFloat() * 2.0 - 1.0;
+                    b0 = 0.99886 * b0 + white * 0.0555179; b1 = 0.99332 * b1 + white * 0.0750759;
+                    b2 = 0.96900 * b2 + white * 0.1538520; b3 = 0.86650 * b3 + white * 0.3104856;
+                    b4 = 0.55000 * b4 + white * 0.5329522; b5 = -0.7616 * b5 - white * 0.0168980;
+                    const auto pink = (float) (0.05 * (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362));
+                    b6 = white * 0.115926;
+                    buffer.setSample (0, i, pink);
+                    buffer.setSample (1, i, pink);
+                }
+                p.processBlock (buffer, midi);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const float y = lp.processSample (hp.processSample (buffer.getSample (0, i)));
+                    if (block >= 40) { sum += y * y; ++count; }
+                }
+            }
+            return 10.0 * std::log10 (sum / (double) count);
+        };
+
+        MixMateProcessor reference;
+        const double off = pinkNoiseLevelDb (reference);
+        double worst = 0;
+        for (auto index : reference.database->getPopular())
+        {
+            MixMateProcessor p;
+            p.setHeadphone (0, index);
+            setParam (p, ParamIDs::headphones, headphones1);
+            const double diff = pinkNoiseLevelDb (p) - off;
+            const auto& hp = p.database->get (index);
+            std::cout << "        " << juce::String (diff, 2).paddedLeft (' ', 6) << " dB  (was "
+                      << juce::String (hp.curve.preampDb, 1)
+                      << " dB preamp)  " << hp.name << std::endl;
+            worst = juce::jmax (worst, std::abs (diff));
+        }
+        check (worst < 1.0, "all popular headphones within 1 dB of off (worst " + juce::String (worst, 2) + " dB)");
     }
 
     std::cout << "Headphone 2 and one-headphone mode" << std::endl;
@@ -142,13 +200,13 @@ int main (int argc, char** argv)
         p.setHeadphone (1, dt770);
         setParam (p, ParamIDs::headphones, headphones2);
         const auto& curve = p.database->get (dt770).curve;
-        const double expected = curveResponseDb (curve, 5000.0, 1.0f, sampleRate) + curve.preampDb;
+        const double expected = curveResponseDb (curve, 5000.0, 1.0f, sampleRate) - curveLoudnessDb (curve, 1.0f, sampleRate);
         auto [l, r] = runSine (p, 5000.0, 0.25f, 0.25f);
         check (std::abs (gainDb (l, 0.25f) - expected) < 0.1, "headphone 2 uses its own curve");
 
         setParam (p, ParamIDs::twoMode, 0.0f);
         const auto& curve1 = p.database->get (p.getHeadphoneIndex (0)).curve;
-        const double expected1 = curveResponseDb (curve1, 5000.0, 1.0f, sampleRate) + curve1.preampDb;
+        const double expected1 = curveResponseDb (curve1, 5000.0, 1.0f, sampleRate) - curveLoudnessDb (curve1, 1.0f, sampleRate);
         auto [l1, r1] = runSine (p, 5000.0, 0.25f, 0.25f);
         check (std::abs (gainDb (l1, 0.25f) - expected1) < 0.1, "one-headphone mode plays headphone 1 instead of 2");
     }
@@ -166,6 +224,25 @@ int main (int argc, char** argv)
 
         auto [dl, dr] = runSine (p, 1000.0, 0.5f, -0.5f);
         check (std::abs (gainDb (dl, 0.5f)) < 0.05 && std::abs (gainDb (dr, 0.5f)) < 0.05, "side: opposite left and right come through");
+
+        // Side stays stereo: a left-only signal comes out with the right side inverted.
+        p.prepareToPlay (sampleRate, blockSize);
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        for (int rep = 0; rep < 40; ++rep)
+        {
+            for (int i = 0; i < blockSize; ++i)
+            {
+                buffer.setSample (0, i, 0.5f * (float) std::sin (0.1 * (rep * blockSize + i)));
+                buffer.setSample (1, i, 0.0f);
+            }
+            p.processBlock (buffer, midi);
+        }
+        double dot = 0;
+        for (int i = 0; i < blockSize; ++i)
+            dot += buffer.getSample (0, i) * buffer.getSample (1, i);
+        check (dot < 0.0 && std::abs (buffer.getSample (0, 100) + buffer.getSample (1, 100)) < 1.0e-6,
+               "side: plays in stereo (right is the inverse of left)");
     }
 
     std::cout << "Band solo" << std::endl;
