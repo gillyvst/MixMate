@@ -91,23 +91,26 @@ SettingsPanel::SettingsPanel (MixMateProcessor& p) : processor (p)
         addAndMakeVisible (sizeButtons[i]);
     }
 
-    saveDefaultButton.onClick = [this]
+    // MSVC can't build a SafePointer from 'this' inside a nested lambda, so make it up front.
+    const juce::Component::SafePointer<SettingsPanel> safeThis (this);
+
+    saveDefaultButton.onClick = [this, safeThis]
     {
         processor.saveAsDefault();
         saveDefaultButton.setButtonText ("Saved!");
-        juce::Timer::callAfterDelay (1500, [safe = juce::Component::SafePointer<SettingsPanel> (this)]
+        juce::Timer::callAfterDelay (1500, [safe = safeThis]
         {
             if (safe != nullptr)
                 safe->saveDefaultButton.setButtonText ("Save as default");
         });
     };
 
-    resetButton.onClick = [this]
+    resetButton.onClick = [this, safeThis]
     {
         juce::AlertWindow::showOkCancelBox (juce::MessageBoxIconType::QuestionIcon, "Reset MixMate?",
             "This puts every setting back to how MixMate shipped and removes your saved default.",
             "Reset", "Cancel", this,
-            juce::ModalCallbackFunction::create ([safe = juce::Component::SafePointer<SettingsPanel> (this)] (int result)
+            juce::ModalCallbackFunction::create ([safe = safeThis] (int result)
             {
                 if (result == 1 && safe != nullptr)
                 {
